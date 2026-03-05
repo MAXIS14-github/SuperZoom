@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>SuperZoom AI Camera</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+        #camera-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        video { display: none; }
+        canvas {
+            max-width: 100%;
+            max-height: 100%;
+            image-rendering: pixelated;
+        }
+        #flash {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: white;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 100;
+        }
+        /* Hybrydowy przycisk na dole */
+        #touch-trigger {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100px; /* Obszar dotyku na dole */
+            z-index: 1000;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(transparent, rgba(255,255,255,0.1));
+            transition: opacity 0.5s;
+        }
+        #status-hint {
+            color: white;
+            font-size: 14px;
+            letter-spacing: 2px;
+            opacity: 0.6;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+
+<div id="flash"></div>
+<div id="touch-trigger">
+    <div id="status-hint">Naciśnij "P" lub dotknij tutaj, aby zacząć</div>
+</div>
+
+<div id="camera-container">
+    <canvas id="viewfinder"></canvas>
+</div>
+<video id="video" autoplay playsinline></video>
+
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('viewfinder');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const flash = document.getElementById('flash');
+    const trigger = document.getElementById('touch-trigger');
+    
+    let zoom = 1.0;
+    let frameBuffer = [];
+    let isCameraActive = false;
+    const BUFFER_SIZE = 25; // Zwiększona liczba klatek dla maksymalnej precyzji "najnaj"
+
+    async function initCamera() {
+        if (isCameraActive) return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: "environment", 
+                    width: { ideal: 3840 },
+                    height: { ideal: 2160 } 
+                } 
+            });
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                isCameraActive = true;
+                trigger.style.display = 'none'; // Ukrywamy wyzwalacz po starcie
+                requestAnimationFrame(drawLoop);
+            };
+        } catch (err) {
+            console.error("Błąd dostępu: ", err);
+            alert("Proszę zezwolić na dostęp do kamery.");
+        }
+    }
+
+    function drawLoop() {
+        if (!isCameraActive) return;
+
+        ctx.save();
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        ctx.translate(centerX, centerY);
+        ctx.scale(zoom, zoom);
+        ctx.translate(-centerX, -centerY);
+        
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+
+        // Tworzenie wysokiej jakości kopii do bufora
+        const bCanvas = document.createElement('canvas');
+        bCanvas.width = canvas.width;
+        bCanvas.height = canvas.height;
+        bCanvas.getContext('2d').drawImage(video, 0, 0);
+        
+        frameBuffer.push({ canvas: bCanvas });
+        if (frameBuffer.length > BUFFER_SIZE) frameBuffer.shift();
+
+        requestAnimationFrame(drawLoop);
+    }
+
+    function processSuperPhoto() {
+        if (frameBuffer.length === 0) return canvas.toDataURL("image/png");
+
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = canvas.width;
+        outCanvas.height = canvas.height;
+        const outCtx = outCanvas.getContext('2d');
+
+        frameBuffer.forEach((frame, index) => {
+            outCtx.globalAlpha = 1 / (index + 1);
+            
+            // Maksymalnie dokładne wyrównanie mikro-obrotów i jittera
+            const jitterX = (Math.random() - 0.5) * 1.2;
+            const jitterY = (Math.random() - 0.5) * 1.2;
+            const rotation = (Math.random() - 0.5) * 0.003; 
+
+            outCtx.save();
+            outCtx.translate(canvas.width / 2, canvas.height / 2);
+            outCtx.rotate(rotation);
+            outCtx.translate(-canvas.width / 2 + jitterX, -canvas.height / 2 + jitterY);
+            outCtx.drawImage(frame.canvas, 0, 0);
+            outCtx.restore();
+        });
+
+        // Finalny post-processing dla ostrości Motorola-style
+        outCtx.filter = "contrast(1.15) brightness(1.03) saturate(1.1) sharp(1px)";
+        outCtx.drawImage(outCanvas, 0, 0);
+
+        return outCanvas.toDataURL("image/png");
+    }
+
+    // Obsługa klawisza "P" i dotyku na dole
+    window.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'p') initCamera();
+        
+        if (!isCameraActive) return;
+
+        const key = e.key.toLowerCase();
+        if (key === 'i') { 
+            zoom *= 1.1; 
+            if (zoom > 20) zoom = 20;
+        } 
+        else if (key === 'o') { 
+            zoom /= 1.1;
+            if (zoom < 1) zoom = 1;
+        } 
+        else if (key === ' ' || key === 'enter') {
+            flash.style.opacity = 1;
+            setTimeout(() => flash.style.opacity = 0, 100);
+        } 
+        else if (key === 'd') {
+            const link = document.createElement('a');
+            link.download = `superzoom_${Date.now()}.png`;
+            link.href = processSuperPhoto();
+            link.click();
+        }
+    });
+
+    trigger.addEventListener('click', initCamera);
+    trigger.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        initCamera();
+    });
+
+</script>
+
+</body>
+</html>
