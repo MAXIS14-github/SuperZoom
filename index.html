@@ -2,60 +2,24 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>SuperZoom AI Camera</title>
+    <title>SuperZoom HQ Camera</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
-        #camera-container {
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            overflow: hidden;
-        }
+        #camera-container { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
         video { display: none; }
-        canvas {
-            max-width: 100%;
-            max-height: 100%;
-            image-rendering: pixelated;
-        }
-        #flash {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: white;
-            opacity: 0;
-            pointer-events: none;
-            z-index: 100;
-        }
-        /* Hybrydowy przycisk na dole */
-        #touch-trigger {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 100px; /* Obszar dotyku na dole */
-            z-index: 1000;
-            cursor: pointer;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: linear-gradient(transparent, rgba(255,255,255,0.1));
-            transition: opacity 0.5s;
-        }
-        #status-hint {
-            color: white;
-            font-size: 14px;
-            letter-spacing: 2px;
-            opacity: 0.6;
-            text-transform: uppercase;
-        }
+        canvas { max-width: 100%; max-height: 100%; image-rendering: high-quality; }
+        #flash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: white; opacity: 0; pointer-events: none; z-index: 100; }
+        #touch-trigger { position: fixed; bottom: 0; left: 0; width: 100%; height: 100px; z-index: 1000; cursor: pointer; display: flex; justify-content: center; align-items: center; background: linear-gradient(transparent, rgba(255,255,255,0.15)); }
+        #status-hint { color: white; font-size: 14px; letter-spacing: 2px; opacity: 0.8; }
+        #ui-info { position: fixed; top: 20px; left: 20px; color: #0f0; font-family: monospace; font-size: 12px; pointer-events: none; }
     </style>
 </head>
 <body>
 
 <div id="flash"></div>
+<div id="ui-info">ZOOM: 1.0x | BUFFER: 0/25</div>
 <div id="touch-trigger">
-    <div id="status-hint">Naciśnij "P" lub dotknij tutaj, aby zacząć</div>
+    <div id="status-hint">P lub DOTKNIJ ABY URUCHOMIĆ</div>
 </div>
 
 <div id="camera-container">
@@ -66,131 +30,123 @@
 <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('viewfinder');
-    const ctx = canvas.getContext('2d', { alpha: false });
-    const flash = document.getElementById('flash');
+    const ctx = canvas.getContext('2d');
+    const uiInfo = document.getElementById('ui-info');
     const trigger = document.getElementById('touch-trigger');
-    
+    const flash = document.getElementById('flash');
+
     let zoom = 1.0;
     let frameBuffer = [];
     let isCameraActive = false;
-    const BUFFER_SIZE = 155; // Zwiększona liczba klatek dla maksymalnej precyzji "najnaj"
+    const BUFFER_SIZE = 500; // wpływa na jakość 
 
     async function initCamera() {
         if (isCameraActive) return;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { 
-                    facingMode: "environment", 
-                    width: { ideal: 3840 },
-                    height: { ideal: 2160 } 
-                } 
+                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } 
             });
             video.srcObject = stream;
             video.onloadedmetadata = () => {
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 isCameraActive = true;
-                trigger.style.display = 'none'; // Ukrywamy wyzwalacz po starcie
+                trigger.style.display = 'none';
                 requestAnimationFrame(drawLoop);
             };
-        } catch (err) {
-            console.error("Błąd dostępu: ", err);
-            alert("Proszę zezwolić na dostęp do kamery.");
-        }
+        } catch (err) { alert("Błąd kamery: " + err); }
     }
 
     function drawLoop() {
         if (!isCameraActive) return;
 
+        // 1. Rysowanie podglądu z aktualnym ZOOMEM
         ctx.save();
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "black";
+        ctx.fillRect(0,0, canvas.width, canvas.height);
         
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        ctx.translate(centerX, centerY);
-        ctx.scale(zoom, zoom);
-        ctx.translate(-centerX, -centerY);
-        
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const zW = canvas.width / zoom;
+        const zH = canvas.height / zoom;
+        const zX = (canvas.width - zW) / 2;
+        const zY = (canvas.height - zH) / 2;
+
+        // Rysujemy tylko wycinek (source), rozciągając go na cały canvas (destination)
+        ctx.drawImage(video, zX, zY, zW, zH, 0, 0, canvas.width, canvas.height);
         ctx.restore();
 
-        // Tworzenie wysokiej jakości kopii do bufora
-        const bCanvas = document.createElement('canvas');
-        bCanvas.width = canvas.width;
-        bCanvas.height = canvas.height;
-        bCanvas.getContext('2d').drawImage(video, 0, 0);
+        // 2. Buforowanie tego, co WIDZIMY (już powiększone)
+        const frameCanvas = document.createElement('canvas');
+        frameCanvas.width = canvas.width;
+        frameCanvas.height = canvas.height;
+        const fCtx = frameCanvas.getContext('2d');
+        fCtx.drawImage(canvas, 0, 0);
         
-        frameBuffer.push({ canvas: bCanvas });
+        frameBuffer.push(frameCanvas);
         if (frameBuffer.length > BUFFER_SIZE) frameBuffer.shift();
 
+        uiInfo.innerText = `ZOOM: ${zoom.toFixed(1)}x | BUFFER: ${frameBuffer.length}/${BUFFER_SIZE}`;
         requestAnimationFrame(drawLoop);
     }
 
     function processSuperPhoto() {
-        if (frameBuffer.length === 0) return canvas.toDataURL("image/png");
+        if (frameBuffer.length < 2) return canvas.toDataURL();
 
         const outCanvas = document.createElement('canvas');
         outCanvas.width = canvas.width;
         outCanvas.height = canvas.height;
         const outCtx = outCanvas.getContext('2d');
 
+        // Ustawienie bazowego stylu dla "sklejania"
+        outCtx.globalCompositeOperation = 'lighter'; // Tryb nakładania dla wzmocnienia sygnału (jasności/detali)
+
         frameBuffer.forEach((frame, index) => {
-            outCtx.globalAlpha = 1 / (index + 1);
+            outCtx.globalAlpha = 1 / frameBuffer.length;
             
-            // Maksymalnie dokładne wyrównanie mikro-obrotów i jittera
-            const jitterX = (Math.random() - 0.5) * 1.2;
-            const jitterY = (Math.random() - 0.5) * 1.2;
-            const rotation = (Math.random() - 0.5) * 0.003; 
+            // Sub-pixel jitter (Precyzyjne wyrównywanie dla Super Resolution)
+            const offsetX = (Math.random() - 0.5) * 0.5;
+            const offsetY = (Math.random() - 0.5) * 0.5;
+            const rotate = (Math.random() - 0.5) * 0.001;
 
             outCtx.save();
-            outCtx.translate(canvas.width / 2, canvas.height / 2);
-            outCtx.rotate(rotation);
-            outCtx.translate(-canvas.width / 2 + jitterX, -canvas.height / 2 + jitterY);
-            outCtx.drawImage(frame.canvas, 0, 0);
+            outCtx.translate(outCanvas.width/2, outCanvas.height/2);
+            outCtx.rotate(rotate);
+            outCtx.translate(-outCanvas.width/2 + offsetX, -outCanvas.height/2 + offsetY);
+            outCtx.drawImage(frame, 0, 0);
             outCtx.restore();
         });
 
-        // Finalny post-processing dla ostrości Motorola-style
-        outCtx.filter = "contrast(1.15) brightness(1.03) saturate(1.1) sharp(1px)";
-        outCtx.drawImage(outCanvas, 0, 0);
+        // Post-processing: Wyostrzanie i kontrast
+        const finalCanvas = document.createElement('canvas');
+        finalCanvas.width = canvas.width;
+        finalCanvas.height = canvas.height;
+        const fCtx = finalCanvas.getContext('2d');
+        fCtx.filter = "contrast(1.2) saturate(1.1) brightness(1.1) sharp(2px)";
+        fCtx.drawImage(outCanvas, 0, 0);
 
-        return outCanvas.toDataURL("image/png");
+        return finalCanvas.toDataURL("image/png");
     }
 
-    // Obsługa klawisza "P" i dotyku na dole
     window.addEventListener('keydown', (e) => {
         if (e.key.toLowerCase() === 'p') initCamera();
-        
         if (!isCameraActive) return;
 
         const key = e.key.toLowerCase();
-        if (key === 'i') { 
-            zoom *= 1.1; 
-            if (zoom > 20) zoom = 20;
-        } 
-        else if (key === 'o') { 
-            zoom /= 1.1;
-            if (zoom < 1) zoom = 1;
-        } 
-        else if (key === ' ' || key === 'enter') {
+        if (key === 'i') zoom = Math.min(zoom + 0.2, 12);
+        if (key === 'o') zoom = Math.max(zoom - 0.2, 1);
+        if (key === ' ' || key === 'enter') {
             flash.style.opacity = 1;
             setTimeout(() => flash.style.opacity = 0, 100);
-        } 
-        else if (key === 'd') {
+        }
+        if (key === 'd') {
+            uiInfo.innerText = "PRZETWARZANIE SUPER-ZOOM...";
             const link = document.createElement('a');
-            link.download = `superzoom_${Date.now()}.png`;
+            link.download = `motorola_style_zoom_${zoom.toFixed(1)}x.png`;
             link.href = processSuperPhoto();
             link.click();
         }
     });
 
     trigger.addEventListener('click', initCamera);
-    trigger.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        initCamera();
-    });
-
 </script>
-
 </body>
 </html>
